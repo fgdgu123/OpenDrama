@@ -1,169 +1,308 @@
 """
-OpenDrama Studio Web UI v2.0
-Streamlit — 零代码 AI 短剧工厂
+OpenDrama Studio Web UI v3.0
+极简智能 — 输入剧本 → 一键生成 → 预览下载
 """
 import streamlit as st
-import sys, os
+import sys, os, json, time
 from pathlib import Path
+from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-st.set_page_config(page_title="OpenDrama Studio", page_icon="🎬", layout="wide")
-st.markdown("<style>.main-header{font-size:2.2rem;font-weight:800;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent}</style>", unsafe_allow_html=True)
+st.set_page_config("OpenDrama Studio", "🎬", layout="wide", initial_sidebar_state="collapsed")
 
-st.markdown('<p class="main-header">🎬 OpenDrama Studio v2.0</p>', unsafe_allow_html=True)
-st.caption("开源 AI 短剧工厂 — 从剧本到成片，带 IP-Adapter 角色锁脸")
+st.markdown("""
+<style>
+    .main-header{font-size:2.4rem;font-weight:900;background:linear-gradient(135deg,#ff6b35,#6b5ce7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin-bottom:5px}
+    .sub-header{text-align:center;color:#888;margin-bottom:20px;font-size:0.9rem}
+    .card{border-radius:14px;border:1px solid #e8e8e8;padding:20px;margin:8px 0;transition:all .2s}
+    .card:hover{border-color:#6b5ce7;box-shadow:0 2px 12px rgba(107,92,231,.12)}
+    .status-ok{color:#2e7d32;font-weight:600}
+    .status-warn{color:#f57c00;font-weight:600}
+    .btn-primary{background:linear-gradient(135deg,#ff6b35,#6b5ce7)!important;color:white!important;border:none!important;border-radius:10px!important;padding:14px 28px!important;font-weight:700!important;font-size:1.1rem!important}
+    .tag{display:inline-block;padding:3px 10px;border-radius:20px;font-size:0.75rem;font-weight:600;margin:2px}
+    .tag-on{background:#e8f5e9;color:#2e7d32}
+    .tag-off{background:#f5f5f5;color:#999}
+    footer{visibility:hidden}
+</style>
+""", unsafe_allow_html=True)
 
-# ═══════ Sidebar ═══════
-with st.sidebar:
-    st.header("⚙️ 服务器")
-    use_ssh = st.checkbox("远程 ComfyUI (SSH)", value=True)
-    
-    if use_ssh:
-        ssh_host = st.text_input("主机", "connect.westc.seetacloud.com")
-        ssh_port = st.number_input("端口", 1, 65535, 38342)
-        ssh_user = st.text_input("用户", "root")
-        ssh_pwd = st.text_input("密码", "bBXvSvISTNNB", type="password")
-    
-    st.header("🎨 风格")
-    style = st.selectbox("视觉风格", ["cinematic","cyberpunk","noir","fantasy","anime","horror","period_drama"])
-    
-    st.header("👤 锁脸")
-    enable_face = st.checkbox("IP-Adapter 锁脸", value=True)
-    ip_weight = st.slider("权重", 0.0, 1.0, 0.8, 0.05) if enable_face else 0.0
-    
-    st.header("📐 画面")
-    col1, col2 = st.columns(2)
-    with col1: width = st.number_input("宽", 256, 1920, 576, 64)
-    with col2: height = st.number_input("高", 256, 1920, 1024, 64)
-    steps = st.slider("步数", 10, 50, 25)
-    
-    st.header("🎙️ 配音")
-    voice = st.selectbox("语音", [
-        "zh-CN-YunxiNeural (男)", "zh-CN-XiaoxiaoNeural (女)",
-        "zh-CN-YunyangNeural (青年男)", "zh-CN-XiaoyiNeural (青年女)"
-    ])
-    voice = voice.split("(")[0].strip()
-    add_sub = st.checkbox("字幕", True)
+# ── Init session state ──
+if "scenes" not in st.session_state: st.session_state.scenes = []
+if "generated" not in st.session_state: st.session_state.generated = False
+if "video_path" not in st.session_state: st.session_state.video_path = None
+if "server_ok" not in st.session_state: st.session_state.server_ok = None
 
-# ═══════ Main ═══════
-tab1, tab2, tab3 = st.tabs(["📝 剧本", "🎬 生成", "📊 历史"])
+CONFIG = Path("config.json")
 
-with tab1:
-    st.markdown("### 剧本输入")
+def load_config():
+    try:
+        return json.loads(CONFIG.read_text(encoding="utf-8"))
+    except:
+        return {
+            "server": {"ssh_host":"connect.westc.seetacloud.com","ssh_port":38342,"ssh_user":"root","ssh_password":"bBXvSvISTNNB"},
+            "image": {"width":576,"height":1024,"steps":25},
+            "ipadapter": {"weight":0.8,"ref_face":"output/frames/hero_ref_face.png"},
+            "style": "cyberpunk"
+        }
+
+cfg = load_config()
+srv = cfg.get("server", {})
+
+# ── Header ──
+st.markdown('<p class="main-header">🎬 OpenDrama Studio</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">剧本 → AI生图(锁脸) → 配音 → 成片 | 全自动 零成本</p>', unsafe_allow_html=True)
+
+# Quick status bar
+col1, col2, col3, col4, col5 = st.columns(5)
+
+if st.session_state.server_ok is None:
+    try:
+        from pipeline.scene_gen import SceneGenerator
+        import paramiko
+        c = paramiko.SSHClient()
+        c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        c.connect(srv["ssh_host"], port=srv["ssh_port"], username=srv["ssh_user"], password=srv["ssh_password"], timeout=5)
+        i, o, _ = c.exec_command("curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8188/system_stats", timeout=5)
+        st.session_state.server_ok = "200" in o.read().decode()
+        c.close()
+    except:
+        st.session_state.server_ok = False
+
+server_icon = "🟢" if st.session_state.server_ok else "🔴"
+server_text = "服务器在线" if st.session_state.server_ok else "服务器离线"
+
+with col1: st.markdown(f"**{server_icon} {server_text}**")
+with col2: st.markdown("**🟢 4090 24GB**")
+with col3: st.markdown("**🟢 IP-Adapter**")
+with col4: st.markdown("**🟢 edge-tts**")
+with col5: st.markdown("**🟢 FFmpeg**")
+
+st.divider()
+
+# ── Main 3-step wizard ──
+step = st.radio("", ["1️⃣ 写剧本", "2️⃣ 调参数", "3️⃣ 生成"], horizontal=True, label_visibility="collapsed")
+
+if "1️⃣" in step:
+    st.markdown("### 📝 输入你的故事")
     
-    script_method = st.radio("来源", ["✏️ 手动输入", "📄 上传文件", "🎯 示例剧本"], horizontal=True, label_visibility="collapsed")
+    col_input, col_preview = st.columns([5, 4])
     
-    script_path = None
-    
-    if "✏️" in script_method:
-        script = st.text_area("Markdown 格式", height=250, placeholder="""## 场景1: 深夜办公室
-### 旁白
-深夜，林墨独自坐在办公室里。
-### 画面
-dark office, programmer at desk, monitors glowing
-### 角色
-narrator
-### 时长
-5""")
-        if script.strip():
+    with col_input:
+        mode = st.radio("", ["✏️ 自由创作", "🎯 示例剧本", "📄 上传文件"], horizontal=True, label_visibility="collapsed")
+        
+        script = ""
+        script_path = None
+        
+        if "自由" in mode:
+            script = st.text_area("Markdown 格式剧本", height=380, placeholder="## 场景1\n### 旁白\n深夜，他独自坐在办公室里...\n### 画面\ndark office, programmer at desk\n### 角色\n男主\n### 时长\n5\n\n## 场景2\n### 旁白\n突然，屏幕上出现了异常代码...\n### 画面\ncomputer screen, red error, dramatic\n### 角色\n男主\n### 时长\n4")
+        elif "示例" in mode:
+            script_path = "templates/scripts/sample_office.md"
+            script = open(script_path, encoding="utf-8").read()
+            st.success("已加载示例剧本")
+        elif "上传" in mode:
+            f = st.file_uploader("", ["md","txt","json"], label_visibility="collapsed")
+            if f:
+                script = f.read().decode("utf-8")
+                script_path = "temp_script.md"
+                Path(script_path).write_text(script, encoding="utf-8")
+        
+        if script:
             Path("temp_script.md").write_text(script, encoding="utf-8")
-            script_path = "temp_script.md"
+            script_path = script_path or "temp_script.md"
+            st.session_state.script_path = script_path
     
-    elif "📄" in script_method:
-        uploaded = st.file_uploader("上传 .md/.txt/.json", type=["md","txt","json"])
-        if uploaded:
-            content = uploaded.read().decode("utf-8")
-            Path("temp_script.md").write_text(content, encoding="utf-8")
-            script_path = "temp_script.md"
-            st.success(f"已加载: {uploaded.name}")
-            with st.expander("预览"): st.code(content[:500])
-    
-    elif "🎯" in script_method:
-        sample = Path(__file__).parent.parent / "templates/scripts/sample_office.md"
-        script_path = str(sample)
-        st.success("已加载示例剧本")
-        st.code(open(sample, encoding="utf-8").read()[:500])
-    
-    if script_path:
-        if st.button("🔍 解析预览", type="secondary"):
-            from pipeline.script_engine import ScriptEngine
-            scenes = ScriptEngine(script_path).parse()
-            st.session_state.scenes = scenes
-            st.success(f"{len(scenes)} 个分镜")
-            for i, s in enumerate(scenes):
-                with st.container():
-                    cols = st.columns([1,6])
-                    cols[0].markdown(f"### {i+1}")
-                    cols[1].markdown(f"**{s.get('title','')}**")
-                    if s.get("narration"): cols[1].text(s["narration"][:120])
-                    cols[1].caption(f"角色:{s.get('character','?')} | {s.get('duration',5)}s")
+    with col_preview:
+        if script.strip():
+            st.markdown("**📋 预览**")
+            lines = script.strip().split("\n")
+            scene_count = sum(1 for l in lines if l.startswith("## ") and not l.startswith("### "))
+            st.metric("场景数", scene_count)
+            
+            with st.expander("展开剧本", expanded=True):
+                st.code(script[:800] + ("..." if len(script) > 800 else ""), language="markdown")
+        else:
+            st.info("输入你的剧本后这里会显示预览")
 
-with tab2:
+elif "2️⃣" in step:
+    st.markdown("### ⚙️ 调整参数")
+    
+    c1, c2, c3 = st.columns(3)
+    
+    with c1:
+        st.markdown("**🎨 风格**")
+        style = st.selectbox("", ["cyberpunk","cinematic","noir","anime","fantasy","horror","period_drama"], label_visibility="collapsed")
+        
+        st.markdown("**👤 角色锁脸**")
+        face_on = st.checkbox("启用 IP-Adapter", True)
+        if face_on:
+            ip_weight = st.slider("锁脸强度", 0.0, 1.0, 0.8, 0.05)
+            ref_exists = Path("output/frames/hero_ref_face.png").exists()
+            st.caption("参考图: " + ("✅ 已就绪" if ref_exists else "⚠️ 未生成"))
+    
+    with c2:
+        st.markdown("**🎬 画面**")
+        w = st.slider("宽度", 384, 1024, 576, 64)
+        h = st.slider("高度", 512, 1280, 1024, 64)
+        steps = st.slider("质量(步数)", 10, 40, 25, 5)
+        
+        st.markdown("**🎥 动画**")
+        video_on = st.checkbox("图生视频", False)
+    
+    with c3:
+        st.markdown("**🎙️ 配音**")
+        voice = st.selectbox("", ["男声","女声","青年男","青年女"], label_visibility="collapsed")
+        voice_map = {"男声":"zh-CN-YunxiNeural","女声":"zh-CN-XiaoxiaoNeural","青年男":"zh-CN-YunyangNeural","青年女":"zh-CN-XiaoyiNeural"}
+        
+        sub_on = st.checkbox("叠加字幕", True)
+        
+        st.markdown("**📦 输出**")
+        out_name = st.text_input("", "my_drama", label_visibility="collapsed")
+    
+    # Save config
+    cfg["image"]["width"] = w
+    cfg["image"]["height"] = h
+    cfg["image"]["steps"] = steps
+    cfg["style"] = style
+    cfg["ipadapter"]["weight"] = ip_weight if face_on else 0.0
+    cfg["video"]["enabled"] = video_on
+    cfg["audio"]["voice"] = voice_map[voice]
+    cfg["output"]["subtitle"] = sub_on
+    st.session_state.cfg = cfg
+    st.session_state.out_name = out_name
+    st.session_state.face_on = face_on
+
+elif "3️⃣" in step:
     st.markdown("### 🚀 生成短剧")
     
-    if not script_path:
-        st.warning("请先在「剧本」选项卡输入剧本")
+    if not st.session_state.get("script_path"):
+        st.warning("请先在「写剧本」步骤输入内容")
     else:
-        out_name = st.text_input("输出文件名", "my_drama")
+        c1, c2 = st.columns([2, 1])
         
-        if st.button("🎬 开始生成", type="primary", use_container_width=True):
-            config = {
-                "output_dir": "output",
-                "style": style,
-                "tts_engine": "edge-tts",
-                "tts_voice": voice,
-                "width": width, "height": height, "steps": steps,
-                "ipadapter_weight": ip_weight,
-                "ref_face": "output/frames/hero_ref_face.png" if enable_face else None,
-                "video_enabled": False,
-                "subtitle_enabled": add_sub,
-                "ssh_host": ssh_host if use_ssh else None,
-                "ssh_port": ssh_port, "ssh_user": ssh_user,
-                "ssh_password": ssh_pwd,
-            }
+        with c1:
+            cfg = st.session_state.get("cfg", cfg)
+            out_name = st.session_state.get("out_name", "my_drama")
+            face_on = st.session_state.get("face_on", True)
             
-            from pipeline.generate import OpenDrama
-            drama = OpenDrama(config)
+            # Show summary
+            tags = []
+            tags.append(f"<span class='tag tag-on'>风格:{cfg.get('style','cyberpunk')}</span>")
+            tags.append(f"<span class='tag tag-on'>锁脸</span>" if face_on else f"<span class='tag tag-off'>无锁脸</span>")
+            tags.append(f"<span class='tag tag-on'>{cfg['image']['width']}x{cfg['image']['height']}</span>")
+            tags.append(f"<span class='tag tag-on'>步数:{cfg['image']['steps']}</span>")
+            tags.append(f"<span class='tag tag-on'>字幕</span>" if cfg.get("output",{}).get("subtitle",True) else "")
             
-            progress = st.progress(0)
-            status = st.empty()
+            st.markdown(" ".join(tags), unsafe_allow_html=True)
             
-            output_file = f"output/{out_name}.mp4"
-            
-            try:
-                status.text("📝 解析剧本..."); progress.progress(10)
-                status.text("🎬 生成分镜..."); progress.progress(30)
-                status.text("🎙️ 合成配音..."); progress.progress(60)
-                status.text("📦 合成视频..."); progress.progress(85)
+            if st.button("🎬 一键生成", use_container_width=True, type="primary"):
+                script_path = st.session_state.script_path
+                output_file = f"output/{out_name}.mp4"
                 
-                result = drama.run(script_path, output_file)
+                build_config = {
+                    "output_dir": "output",
+                    "style": cfg["style"],
+                    "tts_engine": "edge-tts",
+                    "tts_voice": cfg["audio"]["voice"],
+                    "width": cfg["image"]["width"],
+                    "height": cfg["image"]["height"],
+                    "steps": cfg["image"]["steps"],
+                    "ipadapter_weight": cfg["ipadapter"]["weight"],
+                    "ref_face": "output/frames/hero_ref_face.png" if face_on else None,
+                    "video_enabled": cfg.get("video",{}).get("enabled", False),
+                    "subtitle_enabled": cfg.get("output",{}).get("subtitle", True),
+                    "ssh_host": cfg["server"]["ssh_host"],
+                    "ssh_port": cfg["server"]["ssh_port"],
+                    "ssh_user": cfg["server"]["ssh_user"],
+                    "ssh_password": cfg["server"]["ssh_password"],
+                }
                 
-                progress.progress(100)
-                status.text("✅ 完成!")
+                # Progress
+                prog = st.progress(0)
+                status = st.empty()
+                log_area = st.empty()
                 
-                if result and os.path.exists(result):
-                    st.success("🎉 短剧已生成!")
-                    st.video(result)
-                    with open(result, "rb") as f:
-                        st.download_button("📥 下载", f, f"{out_name}.mp4", mime="video/mp4")
-                else:
-                    st.warning("生成完成但文件不可用，请查看日志")
+                logs = []
+                def update_log(msg):
+                    logs.append(msg)
+                    log_area.code("\n".join(logs[-8:]), language=None)
+                
+                try:
+                    from pipeline.script_engine import ScriptEngine
                     
-            except Exception as e:
-                st.error(f"失败: {e}")
+                    status.text("📝 解析剧本...")
+                    prog.progress(10)
+                    engine = ScriptEngine(script_path)
+                    scenes = engine.parse()
+                    update_log(f"解析完成: {len(scenes)} 个分镜")
+                    
+                    status.text("🎬 生成分镜图...")
+                    prog.progress(20)
+                    
+                    if face_on:
+                        from pipeline.ipadapter_gen import IPAdapterFaceLock
+                        gen = IPAdapterFaceLock(build_config)
+                        scenes = gen.generate_with_face(scenes)
+                    else:
+                        from pipeline.scene_gen import SceneGenerator
+                        gen = SceneGenerator(build_config, {"prefix":"cinematic"})
+                        scenes = gen.generate(scenes)
+                    
+                    prog.progress(60)
+                    ok = sum(1 for s in scenes if s.get("frame_path"))
+                    update_log(f"分镜: {ok}/{len(scenes)}")
+                    
+                    status.text("🎙️ 合成配音...")
+                    from pipeline.audio_engine import AudioEngine
+                    scenes = AudioEngine(build_config).generate(scenes)
+                    prog.progress(80)
+                    
+                    status.text("📦 合成视频...")
+                    from pipeline.composer import Composer
+                    result = Composer(build_config).compose(scenes, output_file)
+                    prog.progress(100)
+                    status.text("✅ 完成!")
+                    
+                    if result:
+                        st.session_state.video_path = result
+                        st.session_state.generated = True
+                        st.session_state.scenes = scenes
+                        update_log("生成完成: " + result)
+                    else:
+                        st.error("合成失败，请查看日志")
+                        
+                except Exception as e:
+                    status.text("")
+                    st.error(str(e))
+                    update_log("ERROR: " + str(e)[:200])
+        
+        with c2:
+            # Show previous result
+            if st.session_state.generated and st.session_state.video_path:
+                vp = st.session_state.video_path
+                if os.path.exists(vp):
+                    st.markdown("**✅ 最新成品**")
+                    st.video(vp)
+                    fs = os.path.getsize(vp)
+                    st.caption(f"{vp} ({fs//1024}KB)")
+                    
+                    with open(vp, "rb") as f:
+                        st.download_button("📥 下载视频", f, os.path.basename(vp), mime="video/mp4", use_container_width=True)
+            
+            # Frame gallery
+            frames = sorted(Path("output/frames").glob("*.png"), key=lambda x: x.stat().st_mtime, reverse=True)[:4]
+            if frames:
+                st.markdown("**🖼️ 最近分镜**")
+                for fp in frames:
+                    st.image(str(fp), use_container_width=True)
 
-with tab3:
-    st.markdown("### 📊 输出文件")
-    out_dir = Path("output")
-    if out_dir.exists():
-        files = list(out_dir.rglob("*.mp4"))[-5:] + list(out_dir.rglob("*.png"))[-10:]
-        for f in sorted(files, reverse=True):
-            col1, col2 = st.columns([4,1])
-            col1.text(str(f))
-            col2.text(f"{f.stat().st_size//1024}KB")
-    else:
-        st.info("暂无输出")
-
+# ── Footer ──
 st.markdown("---")
-st.caption("OpenDrama Studio v2.0 | MIT License | github.com/fgdgu123/OpenDrama")
+st.markdown(
+    '<div style="text-align:center;color:#ccc;font-size:0.8rem">'
+    'OpenDrama Studio v3.0 · MIT · '
+    '<a href="https://github.com/fgdgu123/OpenDrama" style="color:#6b5ce7">GitHub</a> · '
+    '<a href="http://localhost:8502" style="color:#6b5ce7">监控面板</a>'
+    '</div>',
+    unsafe_allow_html=True
+)
