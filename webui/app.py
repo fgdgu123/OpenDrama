@@ -40,7 +40,7 @@ def run_pipeline(script_path, output_path, face_on, style, voice):
         "tts_engine": "edge-tts", "tts_voice": voice,
         "width": 576, "height": 1024, "steps": 25,
         "ipadapter_weight": 0.8 if face_on else 0,
-        "ref_face": "output/frames/hero_ref_face.png" if face_on else None,
+        "ref_face": "output/faces/hero_ref_face.png" if face_on else None,
         "video_enabled": False, "subtitle_enabled": True,
         "ssh_host": SRV.get("ssh_host"), "ssh_port": SRV.get("ssh_port"),
         "ssh_user": SRV.get("ssh_user"), "ssh_password": SRV.get("ssh_password"),
