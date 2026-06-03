@@ -95,11 +95,20 @@ if "1️⃣" in step:
         script_path = None
         
         if "自由" in mode:
-            script = st.text_area("Markdown 格式剧本", height=380, placeholder="## 场景1\n### 旁白\n深夜，他独自坐在办公室里...\n### 画面\ndark office, programmer at desk\n### 角色\n男主\n### 时长\n5\n\n## 场景2\n### 旁白\n突然，屏幕上出现了异常代码...\n### 画面\ncomputer screen, red error, dramatic\n### 角色\n男主\n### 时长\n4")
+            script = st.text_area("Markdown 格式剧本", height=380, placeholder="## 场景1\n### 旁白\n深夜，他独自坐在办公室里...\n### 画面\ndark office, programmer at desk\n### 角色\n男主\n### 时长\n5")
         elif "示例" in mode:
-            script_path = "templates/scripts/sample_office.md"
+            # 模板选择
+            templates = {
+                "🔒 悬疑科技 (程序员)": "templates/scripts/sample_office.md",
+                "🏥 医疗惊悚": "templates/scripts/thriller_medical.md",
+                "⚡ 灵气复苏": "templates/scripts/fantasy_awakening.md",
+                "💼 商战爱情": "templates/scripts/romance_business.md",
+                "🤖 科幻克隆": "templates/scripts/scifi_clone.md",
+            }
+            tpl_name = st.selectbox("选择模板", list(templates.keys()))
+            script_path = templates[tpl_name]
             script = open(script_path, encoding="utf-8").read()
-            st.success("已加载示例剧本")
+            st.success(f"已加载: {tpl_name}")
         elif "上传" in mode:
             f = st.file_uploader("", ["md","txt","json"], label_visibility="collapsed")
             if f:
