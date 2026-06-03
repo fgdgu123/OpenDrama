@@ -1,0 +1,42 @@
+{
+  "server": {
+    "ssh_host": "connect.westc.seetacloud.com",
+    "ssh_port": 38342,
+    "ssh_user": "root",
+    "ssh_password": "bBXvSvISTNNB",
+    "comfy_port": 8188
+  },
+  "image": {
+    "width": 576,
+    "height": 1024,
+    "steps": 25,
+    "cfg": 7.0,
+    "sampler": "dpmpp_2m",
+    "scheduler": "karras"
+  },
+  "ipadapter": {
+    "weight": 0.8,
+    "end_at": 0.65,
+    "ref_face": "output/frames/hero_ref_face.png"
+  },
+  "video": {
+    "enabled": false,
+    "model": "wan21_i2v_14b_480p",
+    "frames": 16,
+    "fps": 8
+  },
+  "audio": {
+    "engine": "edge-tts",
+    "voice": "zh-CN-YunxiNeural",
+    "bgm": null
+  },
+  "output": {
+    "dir": "output",
+    "subtitle": true,
+    "codec": "libx264",
+    "crf": 23,
+    "fps": 24
+  },
+  "style": "cyberpunk",
+  "negative_prompt": "ugly, deformed, blurry, bad anatomy, distorted, disfigured, extra limbs, low quality, watermark, text, poorly drawn, cartoon, 3d render, mutated hands"
+}

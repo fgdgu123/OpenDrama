@@ -50,7 +50,31 @@ STATUS_WARN = "⚠️"
 class ComfyLauncher:
     """ComfyUI 自动化启动器"""
     
+    @staticmethod
+    def load_config_from_file(filepath="config.json"):
+        """从 config.json 加载配置"""
+        import json
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            srv = data.get("server", {})
+            return {
+                "host": srv.get("ssh_host", DEFAULT_CONFIG["host"]),
+                "port": srv.get("ssh_port", DEFAULT_CONFIG["port"]),
+                "user": srv.get("ssh_user", DEFAULT_CONFIG["user"]),
+                "password": srv.get("ssh_password", DEFAULT_CONFIG["password"]),
+                "comfy_port": srv.get("comfy_port", DEFAULT_CONFIG["comfy_port"]),
+            }
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+    
     def __init__(self, config=None):
+        # Try config.json first
+        file_cfg = self.load_config_from_file()
+        if file_cfg and not config:
+            config = file_cfg
+        elif file_cfg and config:
+            config = {**file_cfg, **config}
         self.cfg = {**DEFAULT_CONFIG, **(config or {})}
         self._ssh = None
         self._paramiko = None
