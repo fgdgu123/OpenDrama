@@ -84,6 +84,8 @@ class ScriptEngine:
                     "prompt": "",
                     "duration": 5.0,
                     "character": None,
+                    "type": "日常",
+                    "realm": "",
                 }
                 current_field = None
                 continue
@@ -120,6 +122,14 @@ class ScriptEngine:
                     else:
                         current_field = "prompt"
                 
+                # 场景类型
+                elif tag.startswith("类型") or tag.startswith("Type") or tag.startswith("风格"):
+                    val = tag.split("类型", 1)[-1].split("Type", 1)[-1].split("风格", 1)[-1].strip()
+                    if val:
+                        current_scene["type"] = val
+                    else:
+                        current_field = "type"
+                
                 # 时长
                 elif tag.startswith("时长") or tag.startswith("Duration") or tag.startswith("时间"):
                     val = tag.split("时长", 1)[-1].split("Duration", 1)[-1].split("时间", 1)[-1].strip()
@@ -147,6 +157,9 @@ class ScriptEngine:
                         current_scene["duration"] = float(stripped)
                     except ValueError:
                         pass
+                    current_field = None
+                elif current_field == "type":
+                    current_scene["type"] = stripped
                     current_field = None
         
         # 最后一个分镜
