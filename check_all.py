@@ -237,16 +237,27 @@ def main():
         try:
             r = subprocess.run(["git", "log", "--oneline", "-1"], capture_output=True, text=True, cwd=Path(__file__).parent)
             commit = r.stdout.strip()
-            
             r2 = subprocess.run(["git", "branch", "-r"], capture_output=True, text=True, cwd=Path(__file__).parent)
             has_remote = "origin/master" in r2.stdout
-            
             if has_remote:
-                return True, f"最新: {commit}"
-            return False, f"未推送 ({commit})"
+                r3 = subprocess.run(["git", "rev-list", "--count", "origin/master..HEAD"], capture_output=True, text=True, cwd=Path(__file__).parent)
+                ahead = int(r3.stdout.strip() or "0")
+                if ahead > 0:
+                    return True, "Git: " + commit + " +" + str(ahead) + " pending"
+                return True, "Git: " + commit + " (synced)"
+            return False, "no remote"
         except Exception as e:
             return False, str(e)[:60]
     test("本地Git状态", test_git_push)
+
+    def test_webui():
+        import requests
+        try:
+            r = requests.get("http://localhost:8501", timeout=3)
+            return r.status_code == 200, "localhost:8501"
+        except:
+            return False, "not running"
+    test("Web UI", test_webui)
     
     # ── 6. 汇总 ──
     print("\n" + "=" * 60)

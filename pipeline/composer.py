@@ -56,8 +56,11 @@ class Composer:
             duration = scene.get("duration", 5.0)
             
             if not frame or not os.path.exists(frame):
-                print(f"  ⚠️ [{scene['id']}] 缺少图片，跳过")
-                continue
+                # Auto-generate a placeholder frame with text
+                frame = self._gen_placeholder(scene["id"], scene.get("narration", "")[:50])
+                if not frame:
+                    print(f"  ⚠️ [{scene['id']}] 缺少图片，跳过")
+                    continue
             
             seg_file = self.temp_dir / f"seg_{i:03d}.mp4"
             
@@ -145,6 +148,27 @@ class Composer:
             return False
         except Exception:
             return False
+    
+    def _gen_placeholder(self, scene_id, text):
+        """Generate a blank placeholder frame with scene text"""
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            img = Image.new("RGB", (self.width, self.height), (20, 20, 40))
+            draw = ImageDraw.Draw(img)
+            # Center text
+            lines = [scene_id]
+            if text:
+                for i in range(0, len(text), 30):
+                    lines.append(text[i:i+30])
+            y = self.height // 2 - len(lines) * 15
+            for line in lines:
+                draw.text((self.width//2 - len(line)*4, y), line, fill=(200,200,255))
+                y += 30
+            path = self.temp_dir / f"placeholder_{scene_id}.png"
+            img.save(path)
+            return str(path)
+        except ImportError:
+            return None
     
     def _concat_videos(self, concat_file, output_path):
         """拼接所有视频片段"""

@@ -64,10 +64,18 @@ class SceneGenerator:
         parts.append("masterpiece, best quality, cinematic, photorealistic, 8k")
         return ", ".join(parts)
 
-    def _gen_one(self, scene_id, prompt):
-        if self.ssh_host:
-            return self._ssh_generate(scene_id, prompt)
-        return self._http_generate(scene_id, prompt)
+    def _gen_one(self, scene_id, prompt, retries=3):
+        for attempt in range(retries):
+            try:
+                result = self._ssh_generate(scene_id, prompt) if self.ssh_host else self._http_generate(scene_id, prompt)
+                if result:
+                    return result
+                if attempt < retries - 1:
+                    time.sleep(3)
+            except Exception:
+                if attempt < retries - 1:
+                    time.sleep(3)
+        return None
 
     def _ssh_generate(self, scene_id, prompt):
         import paramiko
