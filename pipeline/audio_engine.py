@@ -68,10 +68,10 @@ class AudioEngine:
                 scene["audio_path"] = None
                 continue
             
-            # 确定语音（角色特定）
-            voice = self.voice
+            # 确定语音（角色特定 + 外部覆盖）
+            voice = scene.get("_voice") or self.voice
             character = scene.get("character", "")
-            if character and character in self.voice_map:
+            if not scene.get("_voice") and character and character in self.voice_map:
                 voice = self.voice_map[character]
             
             scene_id = scene["id"]

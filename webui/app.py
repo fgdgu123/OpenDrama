@@ -38,9 +38,20 @@ TEMPLATES = {
 
 def run(script_path, out_path, face, style, voice):
     from pipeline.generate import OpenDrama
+    from pipeline.smart_engine import SmartEngine
+    
+    # Smart analysis for auto-tuning
+    script_text = open(script_path,encoding="utf-8").read()
+    analysis = SmartEngine().analyze(script_text)
+    auto_params = analysis["params"]
+    auto_style = analysis["detected_style"]
+    
     c = {
-        "output_dir":"output","style":style,"tts_engine":"edge-tts","tts_voice":voice,
-        "width":576,"height":1024,"steps":25,"ipadapter_weight":0.8,
+        "output_dir":"output",
+        "style":auto_style if style=="auto" else style,
+        "tts_engine":"edge-tts","tts_voice":voice,
+        "width":auto_params["width"],"height":auto_params["height"],
+        "steps":auto_params["steps"],"ipadapter_weight":0.8,
         "ref_face":"output/faces/hero_ref_face.png" if face else None,
         "video_enabled":False,"subtitle_enabled":True,
         "ssh_host":SRV.get("ssh_host"),"ssh_port":SRV.get("ssh_port"),
@@ -65,7 +76,15 @@ def run(script_path, out_path, face, style, voice):
 
         st.session_state.msg="🎙️ 配音..."; st.session_state.pct=70
         from pipeline.audio_engine import AudioEngine
-        AudioEngine(c).generate(scenes)
+        # Smart voice mapping: different characters get different voices
+        ae = AudioEngine(c)
+        for s in scenes:
+            ch = s.get("character","").lower()
+            if "女主" in ch or "女" in ch or "heroine" in ch:
+                s["_voice"] = "zh-CN-XiaoxiaoNeural"
+            elif "男主" in ch or "男" in ch or "hero" in ch:
+                s["_voice"] = "zh-CN-YunxiNeural"
+        scenes = ae.generate(scenes)
         st.session_state.pct=85
 
         st.session_state.msg="📦 合成..."; st.session_state.pct=95
@@ -100,16 +119,20 @@ else:
 
 # Controls
 st.markdown('<div class="bar">',unsafe_allow_html=True)
-c1,c2,c3,c4=st.columns([2,2,1,2])
-with c1: style=st.selectbox("🎨",["cyberpunk","cinematic","noir","anime","fantasy"],label_visibility="collapsed")
-with c2: voice=st.selectbox("🎙️",list(VOICES.keys()),label_visibility="collapsed")
-with c3: face=st.checkbox("👤锁脸",True)
-with c4:
+c1,c2,c3,c4,c5=st.columns([1.5,1,1,1,2])
+with c1: quick=st.checkbox("⚡智能模式",True,help="自动匹配最优参数")
+with c2: style=st.selectbox("🎨",["auto","cyberpunk","cinematic","noir","anime"],label_visibility="collapsed")
+with c3: voice=st.selectbox("🎙️",list(VOICES.keys()),label_visibility="collapsed") if not quick else st.empty()
+with c4: face=st.checkbox("👤",True) if not quick else st.empty()
+with c5:
     go=bool(script.strip()) and not st.session_state.gen
-    if st.button("🎬 生成" if go else ("⏳..." if st.session_state.gen else "🛑"),use_container_width=True,type="primary",disabled=not go):
+    btn_label = "🚀 一键出片" if quick and go else ("🎬 生成" if go else ("⏳..." if st.session_state.gen else "🛑"))
+    if st.button(btn_label,use_container_width=True,type="primary",disabled=not go):
         st.session_state.gen=True; st.session_state.vid=None; st.session_state.logs=[]; st.session_state.pct=0
         out=f"output/drama_{datetime.now().strftime('%H%M%S')}.mp4"
-        threading.Thread(target=run,args=(script_path,out,face,style,VOICES[voice])).start()
+        final_style = "auto" if quick else style
+        final_voice = VOICES.get(voice,"zh-CN-YunxiNeural") if not quick else "zh-CN-YunxiNeural"
+        threading.Thread(target=run,args=(script_path,out,face,final_style,final_voice)).start()
         st.rerun()
 st.markdown('</div>',unsafe_allow_html=True)
 
