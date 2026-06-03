@@ -23,6 +23,7 @@ DEFAULT_CONFIG = {
     "ipadapter_weight": 0.8, "ipadapter_end_at": 0.65,
     "ref_face": None,
     "video_enabled": False, "video_model": "wan21_i2v_14b_480p",
+    "face_map": {},  # {"hero": "faces/hero.png", "heroine": "faces/heroine.png"}
     "video_frames": 16, "video_fps": 8,
     "tts_engine": "edge-tts", "tts_voice": "zh-CN-YunxiNeural",
     "bgm_path": None, "bgm_volume": 0.3,
@@ -77,8 +78,8 @@ class OpenDrama:
         if not skip_scenes:
             print(f"\n[2/5] 🎬 分镜生成...")
             if self.config.get("ref_face"):
-                from pipeline.ipadapter_gen import IPAdapterFaceLock
-                gen = IPAdapterFaceLock(self.config)
+                from pipeline.ipadapter_gen import MultiCharIPAdapter
+                gen = MultiCharIPAdapter(self.config)
                 scenes = gen.generate_with_face(scenes)
             else:
                 from pipeline.scene_gen import SceneGenerator

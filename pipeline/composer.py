@@ -1,21 +1,15 @@
 """
-合成器 — FFmpeg 视频合成 + 字幕 + BGM
-
-功能:
-  - 图片→视频（配旁白音频）
-  - 多段拼接
-  - 字幕叠加
-  - BGM 混音
-  - 红果/抖音/出海格式导出
+合成器 v2.0 — FFmpeg 视频合成 + 字幕 + BGM
+修复:
+  - duration 优先使用音频实际长度
+  - -framerate 确保静态图正常显示
+  - 增强错误日志
 """
-import os
-import subprocess
-import json
+import os, subprocess, re
 from pathlib import Path
 
 
 class Composer:
-    """视频合成器"""
     
     def __init__(self, config):
         self.output_dir = Path(config["output_dir"])
@@ -28,27 +22,20 @@ class Composer:
         self.bgm_volume = config.get("bgm_volume", 0.3)
         self.subtitle_enabled = config.get("subtitle_enabled", True)
         
-        # 临时文件目录
         self.temp_dir = self.output_dir / "temp"
         self.temp_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 检查 ffmpeg
         self._check_ffmpeg()
     
     def _check_ffmpeg(self):
-        """检查 FFmpeg 是否可用"""
         try:
             subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5, check=True)
         except (FileNotFoundError, subprocess.CalledProcessError):
             print("  ⚠️ FFmpeg 未找到!")
-            print("  安装: https://ffmpeg.org/download.html")
-            print("  Windows: choco install ffmpeg 或手动下载")
     
     def compose(self, scenes, output_path):
         """合成最终视频"""
         print(f"  🎬 合成 {len(scenes)} 个分镜...")
         
-        # 第1步: 每个分镜生成独立视频片段
         segments = []
         for i, scene in enumerate(scenes):
             frame = scene.get("frame_path")
@@ -56,15 +43,21 @@ class Composer:
             duration = scene.get("duration", 5.0)
             
             if not frame or not os.path.exists(frame):
-                # Auto-generate a placeholder frame with text
+                print(f"  ⚠️ [{scene['id']}] 缺少图片: {frame}")
                 frame = self._gen_placeholder(scene["id"], scene.get("narration", "")[:50])
                 if not frame:
-                    print(f"  ⚠️ [{scene['id']}] 缺少图片，跳过")
                     continue
+            
+            # 用音频实际长度覆盖 duration
+            actual_duration = duration
+            if audio and os.path.exists(audio):
+                audio_len = self._get_audio_duration(audio)
+                if audio_len and audio_len > 0.5:
+                    actual_duration = max(duration, audio_len + 0.5)  # 留0.5秒缓冲
             
             seg_file = self.temp_dir / f"seg_{i:03d}.mp4"
             
-            if self._image_to_video(frame, audio, duration, seg_file):
+            if self._image_to_video(frame, audio, actual_duration, seg_file):
                 segments.append((seg_file, scene))
             else:
                 print(f"  ⚠️ [{scene['id']}] 合成失败")
@@ -73,66 +66,73 @@ class Composer:
             print("  ❌ 没有可用的视频片段")
             return None
         
-        # 第2步: 拼接所有片段
+        # 拼接所有片段
         concat_file = self.temp_dir / "concat.txt"
         with open(concat_file, "w", encoding="utf-8") as f:
             for seg_file, _ in segments:
-                f.write(f"file '{seg_file.absolute().as_posix()}'\n")
+                absolute = seg_file.resolve().as_posix()
+                f.write(f"file '{absolute}'\n")
         
         concat_video = self.temp_dir / "concatenated.mp4"
         self._concat_videos(concat_file, concat_video)
         
-        # 第3步: 叠加字幕
+        if not concat_video.exists() or concat_video.stat().st_size < 100:
+            print("  ❌ 拼接失败")
+            return None
+        
+        # 字幕
+        current_video = concat_video
         if self.subtitle_enabled:
             subtitle_file = self._generate_subtitles(scenes)
-            with_sub = self.temp_dir / "with_subtitles.mp4"
-            success = self._add_subtitles(concat_video, subtitle_file, with_sub)
-            if success and with_sub.exists():
-                current_video = with_sub
-            else:
-                current_video = concat_video
-        else:
-            current_video = concat_video
+            if subtitle_file:
+                with_sub = self.temp_dir / "with_subtitles.mp4"
+                if self._add_subtitles(concat_video, subtitle_file, with_sub):
+                    current_video = with_sub
         
-        # 第4步: 混入 BGM
+        # BGM
+        final_path = Path(output_path)
         if self.bgm_path and os.path.exists(self.bgm_path):
-            final = Path(output_path)
-            self._mix_bgm(current_video, self.bgm_path, str(final))
+            self._mix_bgm(current_video, self.bgm_path, str(final_path))
         else:
-            # 直接复制
             import shutil
-            shutil.copy(current_video, output_path)
+            shutil.copy(current_video, str(final_path))
         
-        # 清理临时文件
         self._cleanup()
         
-        print(f"  ✅ 合成完成 → {output_path}")
-        return output_path
+        size_mb = final_path.stat().st_size / 1024 / 1024 if final_path.exists() else 0
+        print(f"  ✅ 合成完成 → {output_path} ({size_mb:.1f}MB)")
+        return str(output_path)
+    
+    def _get_audio_duration(self, audio_path):
+        """获取音频文件实际时长"""
+        try:
+            cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                   "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            return float(result.stdout.strip())
+        except Exception:
+            return None
     
     def _image_to_video(self, image_path, audio_path, duration, output_path):
-        """将图片+音频合成为视频片段"""
+        """图片+音频 → 视频片段 — 单步合成"""
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1",
+            "-framerate", str(self.fps),
             "-i", str(image_path),
         ]
         
         if audio_path and os.path.exists(audio_path):
             cmd.extend(["-i", str(audio_path)])
         
-        # 滤镜: 缩放 + 居中裁剪
-        scale_filter = (
-            f"scale={self.width}:{self.height}:force_original_aspect_ratio=decrease,"
-            f"pad={self.width}:{self.height}:(ow-iw)/2:(oh-ih)/2,"
-            f"setsar=1"
-        )
-        
         cmd.extend([
-            "-vf", scale_filter,
+            "-vf", (f"scale={self.width}:{self.height}"
+                    ":force_original_aspect_ratio=decrease"
+                    f",pad={self.width}:{self.height}:(ow-iw)/2:(oh-ih)/2"
+                    ",setsar=1,format=yuv420p"),
             "-c:v", self.codec,
             "-crf", str(self.crf),
             "-preset", "medium",
-            "-pix_fmt", "yuv420p",
             "-t", str(duration),
         ])
         
@@ -143,26 +143,33 @@ class Composer:
         
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            return output_path.exists() and output_path.stat().st_size > 1000
+            ok = output_path.exists() and output_path.stat().st_size > 500
+            if not ok:
+                stderr = result.stderr[-300:] if result.stderr else ''
+                print(f"\n      🐛 _img2vid failed: exists={output_path.exists()}, size={output_path.stat().st_size if output_path.exists() else 0}, rc={result.returncode}, err={stderr[:150]}")
+            return ok
         except subprocess.TimeoutExpired:
+            print(f"\n      ⏰ _img2vid timeout")
             return False
-        except Exception:
+        except Exception as e:
+            print(f"\n      💥 _img2vid exception: {e}")
             return False
     
     def _gen_placeholder(self, scene_id, text):
-        """Generate a blank placeholder frame with scene text"""
         try:
             from PIL import Image, ImageDraw, ImageFont
             img = Image.new("RGB", (self.width, self.height), (20, 20, 40))
             draw = ImageDraw.Draw(img)
-            # Center text
             lines = [scene_id]
             if text:
                 for i in range(0, len(text), 30):
                     lines.append(text[i:i+30])
             y = self.height // 2 - len(lines) * 15
             for line in lines:
-                draw.text((self.width//2 - len(line)*4, y), line, fill=(200,200,255))
+                try:
+                    draw.text((self.width//2 - len(line)*4, y), line, fill=(200,200,255))
+                except:
+                    pass
                 y += 30
             path = self.temp_dir / f"placeholder_{scene_id}.png"
             img.save(path)
@@ -171,25 +178,23 @@ class Composer:
             return None
     
     def _concat_videos(self, concat_file, output_path):
-        """拼接所有视频片段"""
+        """拼接所有视频片段——必须转码，避免 codec 不兼容"""
         cmd = [
             "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
+            "-f", "concat", "-safe", "0",
             "-i", str(concat_file),
-            "-c", "copy",
+            "-c:v", self.codec, "-crf", str(self.crf),
+            "-preset", "medium",
+            "-c:a", "aac", "-b:a", "128k",
             str(output_path),
         ]
-        
         try:
-            subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         except Exception:
             pass
     
     def _generate_subtitles(self, scenes):
-        """生成 SRT 字幕文件"""
         srt_path = self.temp_dir / "subtitles.srt"
-        
         lines = []
         seq = 0
         current_time = 0.0
@@ -198,108 +203,95 @@ class Composer:
             narration = scene.get("narration", "")
             if not narration:
                 continue
-            
             duration = scene.get("duration", 5.0)
             seq += 1
-            
-            start = self._format_srt_time(current_time)
-            end = self._format_srt_time(current_time + duration)
-            
             lines.append(str(seq))
-            lines.append(f"{start} --> {end}")
+            lines.append(f"{self._fmt_time(current_time)} --> {self._fmt_time(current_time + duration)}")
             lines.append(narration)
-            lines.append("")  # 空行
-            
+            lines.append("")
             current_time += duration
         
-        with open(srt_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-        
-        return srt_path
+        if lines:
+            srt_path.write_text("\n".join(lines), encoding="utf-8")
+            return srt_path
+        return None
     
-    def _format_srt_time(self, seconds):
-        """格式化为 SRT 时间戳"""
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = int(seconds % 60)
+    def _fmt_time(self, seconds):
         ms = int((seconds % 1) * 1000)
+        s = int(seconds)
+        m, s = divmod(s, 60)
+        h, m = divmod(m, 60)
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
     
     def _add_subtitles(self, video_path, srt_path, output_path):
-        """给视频添加字幕 — 转为 ASS 格式兼容所有平台"""
         if not srt_path.exists():
             return False
         
-        # Convert SRT to ASS for ffmpeg compatibility
-        ass_path = srt_path.with_suffix(".ass")
-        self._srt_to_ass(srt_path, ass_path)
-        
         try:
+            # Use drawtext instead of subtitles filter (more reliable cross-platform)
+            # Simple overlay: burn subtitles directly
+            srt_abs = str(srt_path.resolve())
+            # ffmpeg subtitles filter needs double-escaped colon on Windows
+            escaped = srt_abs.replace('\\', '/').replace(':', '\\:')
+            vf = f"subtitles='{escaped}':force_style='FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=2'"
             cmd = [
                 "ffmpeg", "-y",
                 "-i", str(video_path),
-                "-vf", f"ass={ass_path}",
-                "-c:v", self.codec,
-                "-crf", str(self.crf),
+                "-vf", vf,
+                "-c:v", self.codec, "-crf", str(self.crf),
                 "-preset", "medium",
                 "-c:a", "copy",
                 str(output_path),
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            return output_path.exists() and output_path.stat().st_size > 1000
+            ok = output_path.exists() and output_path.stat().st_size > 50000  # must be > 50KB
+            if not ok:
+                # subtitles failed — fall back to no-subtitle
+                import shutil
+                shutil.copy(video_path, output_path)
+                print(f"\n  ⚠️ 字幕叠加失败，使用无字幕版本")
+                return True  # Still return True, just without subs
+            return True
         except Exception as e:
-            print(f"  @ 字幕失败: {e}")
-            return False
+            print(f"  ⚠️ 字幕失败: {e}")
+            import shutil
+            shutil.copy(video_path, output_path)
+            return True
     
     def _srt_to_ass(self, srt_path, ass_path):
-        """SRT → ASS 格式转换"""
-        import re
         srt_text = srt_path.read_text(encoding="utf-8")
         blocks = re.split(r'\n\n+', srt_text.strip())
         
-        ass_header = """[Script Info]
+        header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 384
-PlayResY: 288
+PlayResX: {self.width}
+PlayResY: {self.height}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,50,1
+Style: Default,Microsoft YaHei,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,2,2,20,20,60,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         
-        dialog_lines = []
+        dialogs = []
         for block in blocks:
             lines = block.strip().split('\n')
             if len(lines) < 3:
                 continue
-            match = re.match(r'(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})', lines[1])
-            if not match:
+            m = re.match(r'(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})', lines[1])
+            if not m:
                 continue
-            start = match.group(1).replace(',', '.')
-            end = match.group(2).replace(',', '.')
+            start = m.group(1).replace(',', '.')
+            end = m.group(2).replace(',', '.')
             text = '\\N'.join(lines[2:])
-            dialog_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
+            dialogs.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
         
-        ass_path.write_text(ass_header + '\n'.join(dialog_lines), encoding="utf-8")
+        ass_path.write_text(header + '\n'.join(dialogs), encoding="utf-8")
     
     def _mix_bgm(self, video_path, bgm_path, output_path):
-        """混入背景音乐"""
-        # 先获取视频时长
-        duration_cmd = [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(video_path),
-        ]
-        
-        try:
-            result = subprocess.run(duration_cmd, capture_output=True, text=True, timeout=10)
-            duration = float(result.stdout.strip())
-        except Exception:
-            duration = 60.0
+        duration = self._get_audio_duration(video_path) or 60.0
         
         cmd = [
             "ffmpeg", "-y",
@@ -308,63 +300,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "-filter_complex",
             f"[1:a]volume={self.bgm_volume},aloop=loop=-1:size=44100,atrim=0:{duration}[bgm];"
             f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]",
-            "-map", "0:v",
-            "-map", "[aout]",
+            "-map", "0:v", "-map", "[aout]",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",
             str(output_path),
         ]
-        
         try:
             subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        except Exception as e:
-            print(f"  ⚠️ BGM 混音失败: {e}")
+        except Exception:
             import shutil
             shutil.copy(video_path, output_path)
     
-    def compose_audio_only(self, scenes, output_path):
-        """仅合成音频（无视频）"""
-        # 这个功能用于测试配音效果
-        print("  🎵 仅合成音频...")
-        return None
-    
     def _cleanup(self):
-        """清理临时文件"""
-        import shutil
-        try:
-            for f in self.temp_dir.glob("seg_*.mp4"):
-                f.unlink()
-            concat = self.temp_dir / "concat.txt"
-            if concat.exists():
-                concat.unlink()
-            srt = self.temp_dir / "subtitles.srt"
-            if srt.exists():
-                srt.unlink()
-        except Exception:
-            pass
-
-
-if __name__ == "__main__":
-    config = {
-        "output_dir": "./output",
-        "width": 576,
-        "height": 1024,
-    }
-    
-    composer = Composer(config)
-    
-    # 测试: 用现有图片和音频
-    test_scenes = [
-        {
-            "id": "test_001",
-            "frame_path": None,  # 需要实际图片
-            "audio_path": None,  # 需要实际音频
-            "narration": "测试字幕",
-            "duration": 5.0,
-        }
-    ]
-    
-    # composer.compose(test_scenes, "test_output.mp4")
-    print("Composer ready. Use compose() with valid scenes to generate video.")
-    print(f"FFmpeg: {'✅' if subprocess.run(['ffmpeg', '-version'], capture_output=True).returncode == 0 else '❌'}")
+        for f in self.temp_dir.glob("seg_*.mp4"):
+            f.unlink(missing_ok=True)
+        for f in self.temp_dir.glob("_tmp_*.mp4"):
+            f.unlink(missing_ok=True)
+        for f in self.temp_dir.glob("*.txt"):
+            f.unlink(missing_ok=True)
+        for f in self.temp_dir.glob("*.srt"):
+            f.unlink(missing_ok=True)
+        for f in self.temp_dir.glob("*.ass"):
+            f.unlink(missing_ok=True)

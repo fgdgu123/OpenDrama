@@ -65,8 +65,8 @@ def run(script_path, out_path, face, style, voice):
 
         st.session_state.msg="🎬 生图..."; st.session_state.pct=25
         if face:
-            from pipeline.ipadapter_gen import IPAdapterFaceLock
-            gen = IPAdapterFaceLock(c)
+            from pipeline.ipadapter_gen import MultiCharIPAdapter
+            gen = MultiCharIPAdapter(c)
         else:
             from pipeline.scene_gen import SceneGenerator
             gen = SceneGenerator(c)
