@@ -226,92 +226,64 @@ class Composer:
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
     
     def _add_subtitles(self, video_path, srt_path, output_path):
-        """给视频添加字幕 - Windows 用 drawtext filter 替代 subtitles filter"""
-        import platform
-        
+        """给视频添加字幕 — 转为 ASS 格式兼容所有平台"""
         if not srt_path.exists():
             return False
         
+        # Convert SRT to ASS for ffmpeg compatibility
+        ass_path = srt_path.with_suffix(".ass")
+        self._srt_to_ass(srt_path, ass_path)
+        
         try:
-            # Windows 上 subtitles filter 路径处理有坑，用 drawtext 逐行渲染
-            if platform.system() == "Windows":
-                return self._add_subtitles_drawtext(video_path, srt_path, output_path)
-            
-            # Linux/macOS: 直接使用 subtitles filter
-            srt_escaped = str(srt_path.absolute()).replace("\\", "/").replace(":", "\\:")
             cmd = [
                 "ffmpeg", "-y",
                 "-i", str(video_path),
-                "-vf", f"subtitles={srt_escaped}:force_style='FontSize=28,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Alignment=2,MarginV=50'",
+                "-vf", f"ass={ass_path}",
                 "-c:v", self.codec,
                 "-crf", str(self.crf),
                 "-preset", "medium",
                 "-c:a", "copy",
                 str(output_path),
             ]
-            
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             return output_path.exists() and output_path.stat().st_size > 1000
         except Exception as e:
-            print(f"  ⚠️ 字幕添加失败: {e}")
+            print(f"  @ 字幕失败: {e}")
             return False
     
-    def _add_subtitles_drawtext(self, video_path, srt_path, output_path):
-        """Windows 兼容字幕: 用 drawtext 把字幕烧进每一个分镜"""
-        # 解析 SRT 获得文字列表
+    def _srt_to_ass(self, srt_path, ass_path):
+        """SRT → ASS 格式转换"""
         import re
         srt_text = srt_path.read_text(encoding="utf-8")
-        entries = re.findall(r'\d+\r?\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\r?\n(.+)', srt_text)
+        blocks = re.split(r'\n\n+', srt_text.strip())
         
-        if not entries:
-            return False
+        ass_header = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 384
+PlayResY: 288
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,50,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
         
-        # 构建 drawtext filter chain
-        # 格式: drawtext=text='...':fontsize=28:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-th-80:enable='between(t,start,end)'
-        filters = []
-        current_time = 0.0
+        dialog_lines = []
+        for block in blocks:
+            lines = block.strip().split('\n')
+            if len(lines) < 3:
+                continue
+            match = re.match(r'(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})', lines[1])
+            if not match:
+                continue
+            start = match.group(1).replace(',', '.')
+            end = match.group(2).replace(',', '.')
+            text = '\\N'.join(lines[2:])
+            dialog_lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
         
-        for idx, (start, end, text) in enumerate(entries):
-            text = text.strip().replace("'", "\\'").replace(":", "\\:").replace(",", "\\,")
-            
-            # 解析时间戳
-            def ts_to_sec(ts):
-                parts = ts.replace(',', ':').split(':')
-                return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2]) + int(parts[3])/1000
-            
-            t_start = ts_to_sec(start)
-            t_end = ts_to_sec(end)
-            
-            draw = (
-                f"drawtext=text='{text}':fontsize=28:fontcolor=white@0.95:"
-                f"borderw=3:bordercolor=black@0.6:line_spacing=8:"
-                f"x=(w-text_w)/2:y=h-text_h-80:"
-                f"enable='between(t,{t_start},{t_end})'"
-            )
-            filters.append(draw)
-        
-        filter_chain = ",".join(filters)
-        
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(video_path),
-            "-vf", filter_chain,
-            "-c:v", self.codec,
-            "-crf", str(self.crf),
-            "-preset", "medium",
-            "-c:a", "copy",
-            str(output_path),
-        ]
-        
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            if result.returncode != 0:
-                print(f"  ⚠️ drawtext 失败: {result.stderr[:200]}")
-                return False
-            return output_path.exists() and output_path.stat().st_size > 1000
-        except Exception as e:
-            print(f"  ⚠️ 字幕: {e}")
-            return False
+        ass_path.write_text(ass_header + '\n'.join(dialog_lines), encoding="utf-8")
     
     def _mix_bgm(self, video_path, bgm_path, output_path):
         """混入背景音乐"""
