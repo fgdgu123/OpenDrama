@@ -1,0 +1,10 @@
+# Output
+output/
+*.mp3
+*.mp4
+test_audio.*
+__pycache__/
+*.pyc
+*.pyo
+.env
+temp_script.md

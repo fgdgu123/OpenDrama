@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  opendrama:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./output:/app/output
+      - ./templates:/app/templates
+      - ./my_scripts:/app/my_scripts
+    environment:
+      - COMFYUI_URL=http://comfyui:8188
+    depends_on:
+      - comfyui
+    restart: unless-stopped
+
+  # ComfyUI (可选 - 如果有 GPU)
+  # 需要 nvidia-docker: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/
+  comfyui:
+    image: ghcr.io/ai-dock/comfyui:latest
+    ports:
+      - "8188:8188"
+    volumes:
+      - ./comfyui_data/models:/opt/ComfyUI/models
+      - ./comfyui_data/output:/opt/ComfyUI/output
+      - ./comfyui_data/input:/opt/ComfyUI/input
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    # 如果没有 GPU，注释掉上面的 comfyui 服务，手动指定外部 ComfyUI

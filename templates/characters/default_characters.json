@@ -1,0 +1,28 @@
+{
+  "characters": {
+    "hero": {
+      "name": "林墨",
+      "description": "young Chinese programmer, 28 years old, short neat black hair, sharp intense brown eyes, pale fair skin, slim athletic build, wearing dark grey hoodie, East Asian male",
+      "voice": "zh-CN-YunyangNeural"
+    },
+    "heroine": {
+      "name": "苏夏",
+      "description": "young Chinese woman, 26 years old, short pixie-cut black hair, sharp intelligent eyes, fair skin, slim build, wearing black leather jacket, East Asian female",
+      "voice": "zh-CN-XiaoxiaoNeural"
+    },
+    "villain": {
+      "name": "陈博士",
+      "description": "Chinese man, 55 years old, graying hair combed back, gold-rimmed glasses, stern face, wearing dark suit, calculating expression",
+      "voice": "zh-CN-YunxiNeural"
+    },
+    "narrator": {
+      "name": "旁白",
+      "voice": "zh-CN-YunxiNeural"
+    }
+  },
+  "style": {
+    "name": "cyberpunk",
+    "prefix": "cyberpunk style, neon lights, dark futuristic city, high tech low life, Blade Runner aesthetic",
+    "negative": "cartoon, painting, 3d render, anime, blurry, deformed"
+  }
+}
