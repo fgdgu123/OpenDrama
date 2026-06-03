@@ -223,6 +223,11 @@ def main():
     parser.add_argument("--steps", type=int, default=30)
     parser.add_argument("--ip-weight", type=float, default=0.75)
     parser.add_argument("--tts-engine", default="edge-tts", choices=["edge-tts", "cosyvoice"])
+    parser.add_argument("--ssh-host", help="ComfyUI SSH host")
+    parser.add_argument("--ssh-port", type=int, default=22)
+    parser.add_argument("--ssh-user", default="root")
+    parser.add_argument("--ssh-password", help="SSH password")
+    parser.add_argument("--comfy-port", type=int, default=8188, help="Remote ComfyUI port")
     
     args = parser.parse_args()
     
@@ -240,6 +245,11 @@ def main():
         "ipadapter_weight": args.ip_weight,
         "subtitle_enabled": not args.no_subtitle,
         "video_enabled": not args.no_video,
+        "ssh_host": args.ssh_host,
+        "ssh_port": args.ssh_port,
+        "ssh_user": args.ssh_user,
+        "ssh_password": args.ssh_password,
+        "comfy_port": args.comfy_port,
     }
     
     # 加载角色配置

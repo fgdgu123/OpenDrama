@@ -8,41 +8,61 @@
 
 ## 🎯 一句话
 
-给短剧创作者的"一键流水线"——不是商业 SaaS，是**完全开源免费**的工具包。商业闭源平台收月费，我们靠生态赚钱。
+给短剧创作者的"一键流水线"——不是商业 SaaS，是**完全开源免费**的工具包。
 
-## 🔥 为什么需要 OpenDrama？
+## ⚡ 一键启动
 
-| | 商业闭源 SaaS | 手工开源折腾 | **OpenDrama** |
-|---|---|---|---|
-| 费用 | 月费 199-999 元 | 免费 | **免费** |
-| 技术门槛 | 零 | 极高 | **零** |
-| 数据可控 | ❌ 锁在平台 | ✅ | ✅ |
-| 可定制 | ❌ | ✅ | ✅ |
-| 一键部署 | ✅ | ❌ | ✅ |
-| 开源协议 | 闭源 | Apache/MIT | **MIT** |
+```bash
+# 1. 自动连通远程 ComfyUI（检测+启动+修复模型）
+python launcher.py
+
+# 2. 生成短剧（剧本→AI生图→配音→合成视频）
+python pipeline/generate.py \
+  --script templates/scripts/sample_office.md \
+  --style cyberpunk \
+  --ssh-host <服务器IP> --ssh-password <密码> \
+  --output output/my_drama.mp4
+
+# Windows 用户：直接双击 start.bat
+```
+
+## ✅ 已验证
+
+| 步骤 | 状态 | 耗时 |
+|------|------|------|
+| 剧本解析 (Markdown→分镜) | ✅ | <1s |
+| SSH桥接远程4090生图 | ✅ | ~6秒/张 |
+| 配音合成 (edge-tts) | ✅ | ~2秒/段 |
+| 视频合成 (FFmpeg) | ✅ | ~3秒 |
+| 全链路端到端 (5场景) | ✅ | ~65秒 |
+
+## 🔧 启动器功能
+
+`launcher.py` 自动完成 6 项检测：
+1. SSH 连通性
+2. GPU 状态（型号/显存/利用率）
+3. ComfyUI 服务状态
+4. 模型文件完整性（自动修复缺失）
+5. ComfyUI 自动启动
+6. 图片生成能力验证
+
+```bash
+python launcher.py                    # 全自动
+python launcher.py --check-only       # 仅检查
+python launcher.py --force-restart    # 强制重启
+python launcher.py --config my.json   # 自定义配置
+```
 
 ## ⚡ 核心功能
 
-```
-📝 剧本引擎    → LLM 生成剧本 + 自动拆分分镜
-🎬 分镜生成    → ComfyUI 工作流一键调用（StarLight / DreamShaper + IP-Adapter）
-👤 人物锁脸    → IP-Adapter PLUS 固定角色形象，全剧统一
-🎥 视频生成    → Wan2.1 图生视频批量生产
-🎙️ 配音合成    → CosyVoice / edge-tts 多角色配音
-🎵 BGM + 字幕  → 自动配乐 + 字幕合成
-📦 成品导出    → FFmpeg 合片 + 红果/抖音/出海格式适配
-```
+- 📝 剧本引擎 → Markdown/JSON 自动解析分镜
+- 🎬 分镜生成 → 远程 ComfyUI SSH 桥接，4090 GPU
+- 🎙️ 配音合成 → edge-tts 中文多角色
+- 📦 视频合成 → FFmpeg 拼图+配音+字幕
+- 🌐 Web UI → Streamlit (开发中)
+- 🐳 Docker → docker-compose 一键部署
 
-## 🚀 3 分钟上手
-
-### 前置条件
-
-- **显卡**: 8GB+ 显存（推荐 16GB+）
-- **Python**: 3.10+
-- **ComfyUI**: 已安装并运行
-- **FFmpeg**: 已安装
-
-### 安装
+## 🚀 安装
 
 ```bash
 git clone https://github.com/OpenDrama/OpenDrama.git
@@ -50,105 +70,48 @@ cd OpenDrama
 pip install -r requirements.txt
 ```
 
-### 方式一：Web UI（推荐）
-
-```bash
-python webui/app.py
-# 浏览器打开 http://localhost:8501
-```
-
-### 方式二：命令行
-
-```bash
-# 三步出片
-python pipeline/generate.py --script my_script.txt --output my_drama.mp4
-
-# 进阶控制
-python pipeline/generate.py \
-  --script my_script.txt \
-  --style cyberpunk \
-  --characters characters.json \
-  --voice male \
-  --bgm suspense \
-  --output my_drama.mp4
-```
-
-### 方式三：Docker 一键（含 ComfyUI）
-
-```bash
-docker-compose up -d
-# 端口 8501: Web UI / 端口 8188: ComfyUI
-```
-
-## 📊 管线架构
-
-```
-剧本 (TXT/Markdown)
-  │
-  ├─→ LLM 解析 ─→ 分镜列表 (JSON)
-  │
-  ├─→ 角色管理 ─→ IP-Adapter 参考图
-  │
-  ├─→ ComfyUI ──→ 关键帧图片 (.png)
-  │
-  ├─→ Wan2.1 ───→ 动态视频片段 (.mp4)
-  │
-  ├─→ TTS ──────→ 配音音频 (.mp3)
-  │
-  ├─→ BGM ──────→ 背景音乐 (.mp3)
-  │
-  └─→ FFmpeg ───→ 最终成片 (.mp4)
-```
+需要: Python 3.10+, FFmpeg, 远程 ComfyUI + GPU
 
 ## 🛠️ 技术栈
 
 | 组件 | 技术 | 协议 |
 |------|------|------|
-| 剧本生成 | DeepSeek / Qwen / Llama3 | 开源免费 |
-| 图片生成 | DreamShaper 8 + IP-Adapter PLUS | 开源/可商用 |
+| 图片生成 | DreamShaper 8 (UNET+CLIP+VAE) | 开源可商用 |
 | 视频生成 | Wan2.1 I2V-14B | Apache 2.0 |
-| 语音合成 | CosyVoice / edge-tts | 开源免费 |
-| 编排引擎 | Python + ComfyUI API | - |
-| Web UI | Streamlit | Apache 2.0 |
+| 语音合成 | edge-tts / CosyVoice | 免费 |
+| 编排引擎 | Python + SSH Bridge | - |
+| 合成 | FFmpeg | GPL |
 
 ## 📦 项目结构
 
 ```
 OpenDrama/
-├── pipeline/          # 核心管线脚本
+├── launcher.py        # 一键启动器
+├── start.bat          # Windows 批处理
+├── pipeline/          # 核心引擎
 │   ├── generate.py    # 主入口
-│   ├── script_engine.py   # 剧本引擎
-│   ├── scene_gen.py       # 分镜生成
-│   ├── video_gen.py       # 视频生成
-│   ├── audio_engine.py    # 配音引擎
-│   └── composer.py        # 合成导出
-├── webui/             # Streamlit Web UI
-│   └── app.py
-├── templates/         # 分镜/角色/风格模板
-│   ├── scripts/       # 剧本模板
-│   ├── styles/        # 风格预设
-│   └── characters/    # 角色预设
-├── docker/            # Docker 部署
-│   ├── Dockerfile
-│   └── docker-compose.yml
-├── docs/              # 文档
-└── requirements.txt
+│   ├── script_engine.py
+│   ├── scene_gen.py   # SSH桥接生图
+│   ├── audio_engine.py
+│   └── composer.py
+├── webui/app.py       # Streamlit Web UI
+├── templates/         # 剧本/角色模板
+└── docker/            # Docker 部署
 ```
 
-## 🌍 赚钱模式（OpenDrama 作者视角）
+## 💰 商业模式（开源免费 + 增值服务）
 
 | 层级 | 产品 | 目标 |
 |------|------|------|
-| 🆓 免费 | GitHub 开源 + 教程 | 占领搜索心智 |
+| 🆓 免费 | GitHub 开源 + 教程 | 占领搜索 |
 | 💰 托管 | 云端 GPU 一键启动 | 主力收入 |
 | 🎨 模板 | 精品模板市场 | 持续复购 |
-| 🏢 企业 | 私有化部署 + 定制 | 高客单价 |
-| 🌏 出海 | 海外版本地化 | 新蓝海 |
+| 🏢 企业 | 私有化部署 | 高客单 |
 
 ## 📄 协议
 
-MIT License — 个人/商用均可，注明出处即可。
+MIT License — 个人/商用均可。
 
 ---
 
-**别人在挖金子，我们在卖铲子。金矿会枯竭，铲子的需求只会越来越大。**
+**别人在挖金子，我们在卖铲子。**
