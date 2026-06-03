@@ -81,6 +81,9 @@ def run_pipeline(script_path, output_path, face_on, style, voice):
         st.session_state.status = "✅ 完成!"
         st.session_state.logs.append(f"✓ 输出: {output_path}")
         st.session_state.video_path = result
+        # Record in history
+        from pipeline.history import HistoryManager
+        HistoryManager().add(output_path, {"style": style, "face_lock": face_on})
     except Exception as e:
         st.session_state.status = "❌ 失败"
         st.session_state.logs.append(f"✗ {str(e)[:200]}")
