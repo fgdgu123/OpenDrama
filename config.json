@@ -38,5 +38,10 @@
     "fps": 24
   },
   "style": "cyberpunk",
-  "negative_prompt": "ugly, deformed, blurry, bad anatomy, distorted, disfigured, extra limbs, low quality, watermark, text, poorly drawn, cartoon, 3d render, mutated hands"
+  "negative_prompt": "ugly, deformed, blurry, bad anatomy, distorted, disfigured, extra limbs, low quality, watermark, text, poorly drawn, cartoon, 3d render, mutated hands",
+  "presets": {
+    "quick": {"steps": 15, "width": 512, "height": 768},
+    "quality": {"steps": 30, "width": 576, "height": 1024},
+    "cinema": {"steps": 35, "width": 768, "height": 1280}
+  }
 }
